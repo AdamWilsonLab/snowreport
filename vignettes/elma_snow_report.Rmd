@@ -1,0 +1,220 @@
+---
+title: "elma_snow_report"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{elma_snow_report}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, echo=F}
+devtools::load_all()
+
+# Anomalies
+
+# these are just used to define the season - years don't matter
+season_start=as.Date("2019-11-01")
+season_stop=as.Date("2020-4-01")
+
+stations=ghcnd_stations()
+
+stations%>%filter(
+  grepl("ELMA",name),
+  grepl("NY",state),
+  element=="SNOW",
+  last_year>=2017,
+)
+
+
+stations%>%filter(
+  grepl("BUFFALO",name),
+  grepl("NY",state),
+  element=="SNOW",
+  last_year>=2017,
+)
+
+stations %>% filter(
+  between(latitude, 42.7,42.9),
+  between(longitude,-78.7,-78.5),
+  first_year<=2000,
+  last_year>=2018
+)
+
+
+
+station="USC00308910"
+
+station_name=filter(stations,id==station) %>% slice(1) %>% mutate(fullname=paste0(name,", ",state)) %>% select(fullname) %>% 
+  as.character()
+
+sdata=meteo_tidy_ghcnd(station, #wales
+                      var=c("TMAX","TMIN","SNOW","SNWD"),
+                      date_min = as.Date("1900-01-01")
+                      )
+
+#tdata=meteo_tidy_ghcnd("USW00014733", #Buffalo
+#                      var=c("TMAX","TMIN"),
+#                      date_min = as.Date("1900-01-01")
+#                      )
+
+
+data= sdata%>%
+  mutate(
+  snow=ifelse(is.na(snow),0,snow*.039),
+  snwd=ifelse(is.na(snwd),0,snwd*.039),
+  tmin=tmin/10,
+  tmax=tmax/10,
+  day=day(date),
+  month=month(date),
+  year=year(date),
+  doy=yday(date),
+  winter=ifelse(month<6,year-1,year),
+  winters=paste(winter,winter+1,sep="-"),
+  sday=date-ymd(paste(winter,11,1)),
+  dyear=year+(month/12),
+  fyear=ymd(paste(ifelse(month<6,year,year-1),month,day,sep="-")),
+  sdate=ymd(paste(ifelse(month<6,2020,2019),month,day,sep="-")),
+  season=ifelse(between(sdate,season_start,season_stop),T,F),
+  decade=floor(winter/10)*10,
+  era=cut(winter,breaks = c(1900,2000,2020)))%>%
+  group_by(winters)
+
+firstday<-
+  data%>%
+  filter(snwd>2)%>%
+  summarize(first=first(date,order_by = date)) %>% 
+  mutate(month=month(first))
+
+data_winter<- data %>%
+  group_by(winter)%>%
+  summarize(
+    days_total=n(),
+    days_depth1cm=sum(snwd>1,na.rm=T),
+    days_depth5cm=sum(snwd>=5,na.rm=T),
+    days_depth10cm=sum(snwd>=10,na.rm=T),
+    days_snowfall5cm=sum(snow>=5,na.rm=T),
+    days_snowfall10cm=sum(snow>=10,na.rm=T),
+)
+```
+
+```{r echo=F}
+data_winter %>% 
+  filter(days_total>350) %>% 
+  select(-days_total) %>% 
+  gather(index,value,-winter) %>% 
+  ggplot(aes(x=as.numeric(winter),y=value))+
+  geom_line()+
+  facet_wrap(~index,scales="free_y")+
+  xlab("Year")
+
+```
+
+
+# Annual Snowfall
+````{r}
+data %>% 
+  filter(winter>2000) %>% 
+  ggplot(aes(x=sdate))+
+  facet_wrap(~winter,ncol=5)+
+  xlim(season_start,season_stop)+
+  geom_area(aes(y=snwd),fill=grey(0.6))+
+  geom_line(aes(y=snow),col="red")+
+  ylab("Snowfall (red) & Snow Depth (grey) (cm)")+
+  ggtitle(paste0("Snowfall and Snowdepth 2001-2020 (",station_name,")"),
+          "Red indcates snowfall, grey indicates snow depth")
+```
+
+```{r echo=F}
+#data %>% 
+#  filter(between(sdate,season_start,season_stop)) %>% 
+#  ggplot(aes(x=sdate,y=year,fill=snwd))+
+#  geom_tile()+
+#  geom_point(data=filter(data_2,snow>0),aes(size=snow))+
+#  scale_fill_viridis_c(name="Snow Fall")+
+#  ylab("Year")
+
+# Cumulative Snowfall
+
+sum_snow <- data %>% 
+  group_by(winter) %>% 
+  filter(between(sdate,season_start,season_stop)) %>% 
+  arrange(dyear) %>% 
+  mutate(snowfall=cumsum(snow),
+         maxsnow=max(snowfall))
+
+sum_snow %>% 
+  ggplot(aes(x=sdate,y=snowfall,color=winter,
+             group=as.factor(winter)))+
+  geom_line()+
+  geom_line(data=filter(sum_snow,winter==2020),col="black",size=2)+
+  geom_text(aes(label=winter,x=ymd("20200410"),y=maxsnow),size=3)+
+  scale_color_viridis_c(name="Year")+
+    scale_x_date(name = "Date",
+               breaks='1 month',
+               labels = date_format("%b"))+
+    geom_smooth(aes(group=1),col="red")+
+  ylab("Cumulative Snowfall (cm)")
+```
+
+# Mean Snowdepth
+```{r echo=F}
+mean_snowd <- data %>% 
+  filter(between(sdate,season_start,season_stop)) %>% 
+  group_by(winter) %>% 
+  arrange(dyear) %>% 
+  mutate(snowfall=rollmean(snwd,k = 5,fill = NA))
+
+mean_snowd %>% 
+  ggplot(aes(x=sdate,y=snowfall,color=winter,
+             group=as.factor(winter)))+
+  geom_line()+
+  geom_line(data=filter(mean_snowd,winter==2020),
+            col="black",size=2)+
+  scale_color_viridis_c(name="Year")+
+  ylab("Mean Snow Depth (cm)")
+
+#mean_snowd %>% 
+#  ggplot(aes(x=sdate,y=year,fill=snwd))+
+#  geom_raster()+
+#  scale_fill_viridis_c(name="Snow Depth")+
+#  ylab("Year")
+```
+
+
+
+# Skiable days
+```{r echo=F, eval=F}
+ski_depth=4
+
+data %>% 
+  group_by(winter, era) %>% 
+  arrange(dyear) %>% 
+  mutate(ski_day=snwd>ski_depth,
+         ski_day_smooth=rollmean(ski_day,k = 3,fill = NA)) %>% 
+  group_by(fyear, era) %>% 
+  summarize(ski_day=mean(ski_day_smooth)) %>% 
+  ggplot(aes(x=fyear,y=ski_day*100,color=era, group=era))+
+  geom_point()+
+  geom_smooth(span=.5)+
+  ylab("Proportion Skiable Days (%)")+
+  scale_x_date(name = "Date",
+               limits = ymd(c("20171015","20180501")),
+               breaks='1 month',
+               labels = date_format("%b"))+
+  ggtitle("Proportion Skiable Days",
+          subtitle = paste("% Days with Snowdepth >",
+                           ski_depth,"cm over ",
+                           paste(range(data_2$year),
+                                 collapse="-")))
+  
+
+```
