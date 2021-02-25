@@ -28,3 +28,18 @@ jobs:
       - name: Check
         run: rcmdcheck::rcmdcheck(args = "--no-manual", error_on = "error")
         shell: Rscript {0}
+      - name: Render Site
+        run: |-
+          Rscript -e "rmarkdown::render_site(encoding = 'UTF-8')"
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/master'
+        uses: maxheld83/ghpages@v0.3.0
+        env:
+          BUILD_DIR: docs
+          GH_PAT: ${{ secrets.GH_PAT }}
+          BRANCH: gh-pages
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GH_PAT }}
+          publish_dir: docs
