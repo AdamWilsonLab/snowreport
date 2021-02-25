@@ -30,7 +30,7 @@ jobs:
         shell: Rscript {0}
       - name: Render Site
         run: |-
-          Rscript -e "rmarkdown::render_site(encoding = 'UTF-8')"
+          Rscript -e "pkgdown::build_site()"
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/master'
         uses: maxheld83/ghpages@v0.3.0
